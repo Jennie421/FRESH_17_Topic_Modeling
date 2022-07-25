@@ -1,0 +1,258 @@
+---
+title: "FRESH17 Audio Diary Transcripts Topic Modeling"
+author: "Jennie Li"
+date: "7/14/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 6YG55 daily transcript 
+
+```{r, message=FALSE, include=FALSE}
+library(tidyverse)
+library(tidytext)  
+library(tm)               
+library(slam)                       ## utility functions for sparse matrices 
+library(wordcloud)
+library(textreg)                    ## package with some utilities
+library(readr)                      ## helpful for encoding
+#library(textstem)                   ## stemmer and lemmatizer
+library(textdata)                   ## datasets and lexica
+
+library(anacor)                     ## package for correspondence analysis 
+library(dplyr)
+```
+
+
+## Data cleaning 
+```{r, eval = FALSE}
+#import and merge all CSV files into one data frame
+init_df <- data.frame()
+path = "/Users/test/Desktop/TopicModeling/3KS75_wordclouds/week_level_wordclouds/tables/"
+file.names <- dir(path, pattern =".csv") # here I’m telling it to grab csv files
+
+for(i in 1:length(file.names)){
+  filename <- unlist(strsplit(file.names[i],".csv"))[1]
+  file <- data.frame(read.csv(paste(path, file.names[i], sep = "")))
+  
+  file = file[c("word","abs_freq")]
+  
+  file$subject <- unlist(strsplit(filename,"_"))[3] # get subject ID from file name
+  file$week_number <- unlist(strsplit(filename,"_"))[7] # get week number from file name
+  file <- file %>% dplyr::select(subject, everything()) # reordering columns
+  init_df <- plyr::rbind.fill(init_df, file)
+}
+init_df 
+```
+
+```{r, eval = FALSE}
+df = init_df %>% spread(word, abs_freq)
+class(df)
+```
+
+
+## Establish Corpus
+```{r}
+#import and merge all CSV files into one data frame
+path = 'FRESH_17_6YG55_topicModeling.csv'
+myTable = data.frame(read.csv(path))
+subject_id = unlist(strsplit(path, "_"))[3]
+# myCorpus <- Corpus(VectorSource(myTable$text)) # First way of creating corpus
+myCorpus = VCorpus(DataframeSource(myTable)) # Second way of creating corpus
+```
+
+
+
+### Pre-processing
+```{r, warning=FALSE}
+## user-defined stopwords
+myStopwords <- c("and", "but", "were", "are",
+                 "those", "just", "like", "um", "ve", "ll", "re", "blah",
+                 "redacted", "inaudible", "hmm", "thing", "things", "yada", "yeah",
+                 "three", "five")
+
+myCorpus <- tm_map(myCorpus, removeWords, c(stopwords("english"), myStopwords))  ## remove default and user-defined stopwords
+myCorpus <- tm_map(myCorpus, removeNumbers)      ## remove numbers 
+
+# inspect(myCorpus)    ## pre-processed texts
+```
+
+
+
+### Quick Word cloud viz on corpus
+```{r}
+## quick word cloud or entire corpus
+set.seed(1113)
+dev.new()
+wordcloud(myCorpus, colors = brewer.pal(8, "Dark2"), min.freq = 10)
+title(subject_id)
+```
+
+## Establish DTM
+```{r}
+dtm <- DocumentTermMatrix(myCorpus)        ## create dtm (tf-weighted)
+dtm
+as.matrix(dtm)[1:10, 1:10]                       ## show first 10 words   
+dim(as.matrix(dtm))
+```
+
+
+```{r}
+tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i], dtm$j, mean) * log2(nDocs(dtm)/col_sums(dtm > 0))
+cut <- quantile(tfidf, probs = 0.10)       ## 90% most important words
+dtm2 <- dtm[, tfidf >= cut]        ## subset tf weighted DTM
+
+dtm2                                       ## obviously less words than in original DTM
+dtm2_mat <- as.matrix(dtm2)                ## convert into matrix
+rowSums(dtm2_mat)                              ## check row sums
+## Important: it can happen that for some documents we have full 0 frequencies. 
+## Those need to be eliminated before CA
+dim(dtm2_mat)
+```
+
+
+
+## Filter by tf-idf (term frequency-inverse document frequency)
+```{r}
+## The analysis below is based on the tf version. However, we would like to filter the most important 
+## words according to the tf-idf. 
+## Compute tf-idf for each word:
+tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i], dtm$j, mean) * log2(nDocs(dtm)/col_sums(dtm > 0))
+tfidf[1:10] %>% round(5)
+#cut <- quantile(tfidf, probs = 0.95)       ## 5% most important words
+#cut                                            ## 95% tf-idf quantile
+#dtm2 <- dtm[, tfidf >= cut]        ## subset tf weighted DTM
+dtm2 <- dtm[, tfidf >= median(tfidf)]     ## use median cut
+dtm2                                       ## obviously less words than in original DTM
+dtm2_mat <- as.matrix(dtm2)                ## convert into matrix
+rowSums(dtm2_mat)                              ## check row sums
+## Important: it can happen that for some documents we have full 0 frequencies. 
+## Those need to be eliminated before CA
+dim(dtm2_mat)
+```
+
+Matrix after filtering 
+```{r}
+as.matrix(dtm2)[1:10, 1:10]  
+```
+
+
+## Fit Correspondence Analysis 
+```{r}
+## --- fit CA
+fitca <- anacor(dtm2)           ## fit 2D CA solution
+#fitca <- anacor(dtm)           
+fitca
+
+plot(fitca)         ## standard CA joint plot (fairly cluttered), let's separate the two plots
+
+```
+```{r}
+## plot rows (documents, contributions)
+fitca$row.scores
+plot(fitca, plot.type = "rowplot", main = "Transcripts")  
+```
+
+```{r, eval = FALSE}
+## plot columns (terms): we use textplot() from wordcloud to avoid overlapping labels
+head(fitca$col.scores)
+dev.new()
+textplot(fitca$col.scores[,1], fitca$col.scores[,2], words = rownames(fitca$col.scores), cex = 0.7, ylim = c(-2,2), asp = 1)
+abline(h = 0, v = 0, lty = 2, col = "gray")
+```
+
+
+## Topic Modeling 
+
+```{r}
+library("topicmodels")              ## fitting topic models
+DTmat2 = dtm2  # Use cleaned, established dtm2
+```
+
+### finding a reasonable number of topics
+```{r, eval=FALSE}
+library("ldatuning")
+set.seed(123)
+Ktopics <- FindTopicsNumber(DTmat2, topics = 2:30, metrics = c("Arun2010", "CaoJuan2009", "Griffiths2004", "Deveaud2014"))
+FindTopicsNumber_plot(Ktopics)
+```
+
+### fit topic model
+```{r}
+K <- 5
+set.seed(123)
+# goplda <- LDA(dtm2, k = K)   ## use the simple EM estimation (another alternative would be Gibbs sampling)
+
+goplda = LDA(dtm2, k = K, method = "Gibbs")
+
+goplda
+```
+
+
+```{r, eval=FALSE}
+t(posterior(goplda)$terms)
+```
+
+
+## Posterior frequency 
+```{r}
+postprob <- posterior(goplda)
+pterms <- as.data.frame(t(postprob$terms))
+round(head(pterms, 60), 4)                    ## probabilistic assignments of words to clusters
+# Each word gets a full vector of probability according to the topic assignments.
+```
+
+```{r}
+terms(goplda, 30)                              ## top 20 terms in each topic
+```
+
+
+```{r}
+topics(goplda)[1:10]                           ## assignments of the first 10 voters to each topic
+# each individual/document is also assigned to a certain topic.
+```
+
+
+```{r}
+## visualization using word clouds
+set.seed(123)
+w2 <- pterms %>% mutate(word = rownames(pterms)) %>% gather(topic, weight, -word)
+
+n <- 90
+pal <- rep(brewer.pal(9, "Greys"), each = ceiling(n/9))[n:1]
+dev.new()
+op <- par(mfrow = c(3,2), mar = c(3,0,2,0))
+for (i in 1:K) {
+  w3 <- w2 %>% dplyr::filter(topic == i) %>% arrange(desc(weight))
+  print(w3)
+  with(w3[1:n, ], wordcloud(word, freq = weight, scale = c(2, 0.5), random.order = FALSE, ordered.colors = TRUE, 
+                            colors = pal))
+  title(paste(subject_id, "topic", i))
+}
+par(op)
+```
+
+
+
+
+
+## Document classification and perdictoin 
+```{r, included=FALSE}
+library("RTextTools")
+library("caret")
+library("glmnet")
+library("Matrix")
+```
+
+
+
+
+
+
+
+
+
+

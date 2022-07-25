@@ -1,0 +1,158 @@
+---
+title: "FRESH17 Audio Diary Transcripts Topic Modeling"
+author: "Jennie Li"
+date: "7/14/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Subject daily transcript 
+
+```{r, message=FALSE, include=FALSE}
+library(tidyverse)
+library(tm)               
+library(slam)                       ## utility functions for sparse matrices 
+library(wordcloud)
+library(textreg)                    ## package with some utilities
+library(readr)                      ## helpful for encoding
+library(anacor)                     ## package for correspondence analysis 
+library(dplyr)
+```
+
+# Path
+```{r}
+s_list = list("3KS75", "6YG55", "3EF35", "7EK65", 
+              "8VY68", "7XP88", "7ZW55", "9RP78", 
+              "8QZ55", "9SA35")
+
+subject_id = s_list[10]
+```
+
+
+## Establish Corpus
+```{r}
+#import CSV files into one data frame
+cur_dir = getwd()
+path = paste(cur_dir, '/../FRESH_17_text/transcript_level_text/', 'FRESH_17_', subject_id, '_dailyText.csv', sep='')
+myTable = data.frame(read.csv(path))
+myCorpus = VCorpus(DataframeSource(myTable)) # Second way of creating corpus
+```
+
+
+### Pre-processing
+```{r, warning=FALSE}
+## user-defined stopwords
+myStopwords <- c("and", "but", "were", "are",
+                 "those", "just", "like", "um", "ve", "ll", "re", "blah",
+                 "redacted", "inaudible", "hmm", "thing", "things", "yada", "yeah",
+                 "three", "five")
+
+myCorpus <- tm_map(myCorpus, removeWords, c(stopwords("english"), myStopwords))  ## remove default and user-defined stopwords
+myCorpus <- tm_map(myCorpus, removeNumbers)      ## remove numbers 
+# inspect(myCorpus)    ## pre-processed texts
+```
+
+
+
+### Quick Word cloud viz on corpus
+```{r}
+## quick word cloud or entire corpus
+set.seed(1113)
+dev.new(width = 1000, height = 1000, unit = "px")
+wordcloud(myCorpus, colors = brewer.pal(8, "Dark2"), min.freq = 10, 
+          scale=c(2,.5))
+title(subject_id)
+```
+
+## Establish DTM
+```{r}
+dtm <- DocumentTermMatrix(myCorpus)        ## create dtm (tf-weighted)
+dtm
+as.matrix(dtm)[1:10, 1:8]                       ## show first 10 words   
+dim(as.matrix(dtm))
+```
+
+
+## Filter by tf-idf (term frequency-inverse document frequency)
+```{r}
+tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i], dtm$j, mean) * log2(nDocs(dtm)/col_sums(dtm > 0))
+cut <- quantile(tfidf, probs = 0.10)       ## 90% most important words
+dtm2 <- dtm[, tfidf >= cut]        ## subset tf weighted DTM
+
+dtm2                                       ## obviously less words than in original DTM
+dtm2_mat <- as.matrix(dtm2)                ## convert into matrix
+rowSums(dtm2_mat)                              ## check row sums
+## Important: it can happen that for some documents we have full 0 frequencies. 
+## Those need to be eliminated before CA
+dim(dtm2_mat)
+```
+
+
+## Topic Modeling 
+
+```{r}
+library("topicmodels")              ## fitting topic models
+DTmat2 = dtm2  # Use cleaned, established dtm2
+```
+
+### finding a reasonable number of topics
+```{r, eval=FALSE}
+library("ldatuning")
+set.seed(123)
+Ktopics <- FindTopicsNumber(DTmat2, topics = 2:30, metrics = c("Arun2010", "CaoJuan2009", "Griffiths2004", "Deveaud2014"))
+FindTopicsNumber_plot(Ktopics)
+```
+
+### fit topic model
+```{r}
+K <- 5
+set.seed(123)
+goplda = LDA(dtm2, k = K, method = "Gibbs")
+goplda
+```
+
+## Posterior frequency 
+```{r}
+postprob <- posterior(goplda)
+pterms <- as.data.frame(t(postprob$terms))
+round(head(pterms, 60), 4)                    ## probabilistic assignments of words to clusters
+# Each word gets a full vector of probability according to the topic assignments.
+```
+
+
+```{r}
+terms(goplda, 30)                              ## top 20 terms in each topic
+```
+
+
+```{r}
+## visualization using word clouds
+set.seed(123)
+w2 <- pterms %>% mutate(word = rownames(pterms)) %>% gather(topic, weight, -word)
+print(w2)
+
+n <- 90
+pal <- rep(brewer.pal(9, "Greys"), each = ceiling(n/9))[n:1]
+dev.new(width = 1000, height = 1000, unit = "px")
+op <- par(mfrow = c(3,2), mar = c(3,0,2,0))
+for (i in 1:K) {
+  w3 <- w2 %>% dplyr::filter(topic == i) %>% arrange(desc(weight))
+  with(w3[1:n, ], wordcloud(word, freq = weight, scale = c(1.5, 0.5), random.order = FALSE, ordered.colors = TRUE, colors = pal))
+  title(paste(subject_id, "topic", i))
+}
+par(op)
+```
+
+
+
+
+
+
+
+
+
+
+
