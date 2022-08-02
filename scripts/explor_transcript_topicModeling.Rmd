@@ -19,7 +19,6 @@ library(slam)                       ## utility functions for sparse matrices
 library(wordcloud)
 library(textreg)                    ## package with some utilities
 library(readr)                      ## helpful for encoding
-#library(textstem)                   ## stemmer and lemmatizer
 library(textdata)                   ## datasets and lexica
 
 library(anacor)                     ## package for correspondence analysis 
@@ -54,16 +53,37 @@ class(df)
 ```
 
 
+# Path
+```{r}
+s_list = list("3EF35", "3KS75", "6YG55", "7EK65", 
+              "7XP88", "7ZW55", "8QZ55", "8VY68",  
+               "9RP78", "9SA35")
+
+subject_id = s_list[7]
+```
+
+
 ## Establish Corpus
 ```{r}
-#import and merge all CSV files into one data frame
-path = 'FRESH_17_6YG55_topicModeling.csv'
+#import CSV files into one data frame
+cur_dir = getwd()
+path = paste(cur_dir, '/../FRESH_17_text/transcript_level_text/', 'FRESH_17_', subject_id, '_dailyText.csv', sep='')
 myTable = data.frame(read.csv(path))
-subject_id = unlist(strsplit(path, "_"))[3]
-# myCorpus <- Corpus(VectorSource(myTable$text)) # First way of creating corpus
+
+for (i in 1:nrow(myTable)) {
+  myTable$text[i] = gsub("\\[.*?\\]",".", myTable$text[i]) # remove "[text]"
+  myTable$text[i] = gsub("\\-.*?","", myTable$text[i]) # remove "-"
+}
+
 myCorpus = VCorpus(DataframeSource(myTable)) # Second way of creating corpus
 ```
 
+
+```{r}
+s = "there must be --something"
+s = gsub("\\-.*?","", s)
+s
+```
 
 
 ### Pre-processing
@@ -74,16 +94,15 @@ myStopwords <- c("and", "but", "were", "are",
                  "redacted", "inaudible", "hmm", "thing", "things", "yada", "yeah",
                  "three", "five")
 
+
 myCorpus <- tm_map(myCorpus, removeWords, c(stopwords("english"), myStopwords))  ## remove default and user-defined stopwords
 myCorpus <- tm_map(myCorpus, removeNumbers)      ## remove numbers 
-
 # inspect(myCorpus)    ## pre-processed texts
 ```
 
 
-
 ### Quick Word cloud viz on corpus
-```{r}
+```{r, eval=FALSE}
 ## quick word cloud or entire corpus
 set.seed(1113)
 dev.new()
@@ -95,7 +114,7 @@ title(subject_id)
 ```{r}
 dtm <- DocumentTermMatrix(myCorpus)        ## create dtm (tf-weighted)
 dtm
-as.matrix(dtm)[1:10, 1:10]                       ## show first 10 words   
+as.matrix(dtm)[1:2, 1:30]                       ## show first 10 words   
 dim(as.matrix(dtm))
 ```
 
@@ -237,22 +256,124 @@ par(op)
 
 
 
+================================================================================
+## Vector space model - similarity between words/terms
+```{r warning=FALSE, included=FALSE}
+library(tidyverse)
+library(tm)               
+library(dplyr)
+library(slam)                       ## utility functions for sparse matrices 
+
+library("irlba")                    ## efficient SVD which we will use for LSA
+library("MPsychoR")                 ## GOP statements
+library("randomNames")              ## we add random names to make it a bit more sparkling
+library("tm")
+library("slam")
+```
 
 
-## Document classification and perdictoin 
-```{r, included=FALSE}
-library("RTextTools")
-library("caret")
-library("glmnet")
-library("Matrix")
+```{r}
+#import CSV files into one data frame
+cur_dir = getwd()
+path = paste(cur_dir, '/../FRESH_17_text/subject_level_text/FRESH_17_subjectText.csv', sep='')
+study_id = 'FRESH_17'
+myTable = data.frame(read.csv(path))
+myCorpus = VCorpus(DataframeSource(myTable)) # creating corpus 
+
+### Pre-processing
+## user-defined stopwords
+myStopwords <- c("and", "but", "were", "are",
+                 "those", "just", "like", "um", "ve", "ll", "re", "blah",
+                 "redacted", "inaudible", "hmm", "thing", "things", "yada", "yeah",
+                 "three", "five")
+
+myCorpus <- tm_map(myCorpus, removeWords, c(stopwords("english"), myStopwords))  ## remove default and user-defined stopwords
+myCorpus <- tm_map(myCorpus, removeNumbers)      ## remove numbers 
+
+## Establish DTM 
+dtm <- DocumentTermMatrix(myCorpus)        ## create dtm (tf-weighted)
+```
+
+```{r}
+## Filter out unimportant words
+tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i], dtm$j, mean) * log2(nDocs(dtm)/col_sums(dtm > 0))
+cut <- quantile(tfidf, probs = 0.03)       ## keep 90% most important words
+dtm2 <- dtm[, tfidf >= cut]    #    ## subset tf weighted DTM
+tdmat2 <- t(dtm2)
+tdmat2
 ```
 
 
 
+```{r}
+all(col_sums(tdmat2) > 0)
+ind <- which(col_sums(tdmat2)  > 0)         
+tdmat2 <- tdmat2[,ind]                   ## remove Anthony (full 0 vector)
+all(col_sums(tdmat2) > 0)                 ## check OK
+tdmat2
+findAssocs(tdmat2, c("parents", "stressful"), corlimit = c(0.9, 0.91))   ## quick association computation
+## Computes Pearson correlations between e.g. the "gun" tf-idf vector and the remaining words, 
+## and then prints out the ones that are above a particular threshold. 
+```
 
 
+```{r}
+## --- fit LSA 
+tdmat2 <- as.matrix(tdmat2)               ## convert into matrix
+tdmat2_doc1 <- tdmat2[,1]                 ## let's keep one document out of the computation, we will embed this into our space later on
+tdmat2_doc1[1:400]
+tdmat3 <- tdmat2[,-1]
+dim(tdmat3)
+```
+
+### Extract 50 dimensions 
+```{r}
+fit_lsa <- irlba(tdmat2, nv = 5)        ## efficient SVD computation (partial SVD)
+## nv is the number of dimensions. We use 50 here, as this is a very small corpus. Usually something 
+## like 300 is a good number. 
+```
 
 
+### Plot term vector space using U matrix, doc vector space using V matrix
+```{r}
+str(fit_lsa)              ## matrices, U, D, V
+V <- fit_lsa$v            ## extract V  
+dim(V)                    ## documents in rows, new variables in columns
+V            
+U <- fit_lsa$u            ## terms in rows, new variables in columns
+dim(U)
+D <- diag(fit_lsa$d)
+dim(D)
+```
+
+```{r}
+
+#library(tidyverse)
+library(basicPlotteR)
+## --- plot documents using MDS
+cos_dist <- proxy::dist(V, "cosine") 
+dim(cos_dist)
+fit_mds <- cmdscale(cos_dist)
+fit_mds
+plot(fit_mds, pch = 19, cex = 0.1, xlab = "D1", ylab = "D2", main = "Subject Configuration")
+text(fit_mds, labels = colnames(tdmat2), cex = 0.6, pos = 3)
+
+# addTextLabels(fit_mds, colnames(tdmat2))
+
+```
+
+
+```{r}
+library("lsa")
+cosine(V[8, ], V[3, ])      ## similarity of new voter to first voter in sample
+cosine(V[4, ], V[7, ])      ## similarity of new voter to second voter in sample, etc.
+# tdmat2[1,]
+```
+
+
+```{r, eval=FALSE}
+rm(list = ls()); gc()            ## free up memory
+```
 
 
 

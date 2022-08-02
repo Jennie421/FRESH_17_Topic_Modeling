@@ -5,6 +5,8 @@ date: "7/14/2022"
 output: pdf_document
 ---
 
+The script is adapted from Patrick Mair. 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -24,11 +26,11 @@ library(dplyr)
 
 # Path
 ```{r}
-s_list = list("3KS75", "6YG55", "3EF35", "7EK65", 
-              "8VY68", "7XP88", "7ZW55", "9RP78", 
-              "8QZ55", "9SA35")
+s_list = list("3EF35", "3KS75", "6YG55", "7EK65", 
+              "7XP88", "7ZW55", "8QZ55", "8VY68",  
+               "9RP78", "9SA35")
 
-subject_id = s_list[10]
+subject_id = s_list[7]
 ```
 
 
