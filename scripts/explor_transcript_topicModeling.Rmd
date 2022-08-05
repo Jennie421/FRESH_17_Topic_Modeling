@@ -321,7 +321,7 @@ findAssocs(tdmat2, c("parents", "stressful"), corlimit = c(0.9, 0.91))   ## quic
 ## --- fit LSA 
 tdmat2 <- as.matrix(tdmat2)               ## convert into matrix
 tdmat2_doc1 <- tdmat2[,1]                 ## let's keep one document out of the computation, we will embed this into our space later on
-tdmat2_doc1[1:400]
+tdmat2_doc1[1:20]
 tdmat3 <- tdmat2[,-1]
 dim(tdmat3)
 ```
